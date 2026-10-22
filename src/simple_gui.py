@@ -284,10 +284,10 @@ def main():
         key = cv2.waitKey(20) & 0xFF
         if key in (ord("q"), 27):
             break
-        if key == ord("n"):
+        if key == ord("]"):
             index = (index + 1) % len(files)
             dirty = True
-        elif key == ord("p"):
+        elif key == ord("["):
             index = (index - 1) % len(files)
             dirty = True
         elif key == ord("s"):
