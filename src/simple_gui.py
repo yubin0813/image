@@ -30,10 +30,10 @@ EXTS = {".jpg", ".jpeg", ".png", ".bmp"}#支持的文件类型
 PREVIEW_W, PREVIEW_H = 1100, 620#图片分辨率大小
 
 
-def choose_folder():
+def choose_folder(title="选择图片文件夹"):
     root = Tk()#创建一个TK窗口
     root.withdraw()#把它隐藏
-    folder = filedialog.askdirectory(title="选择图片文件夹")#弹出系统文件夹选择框
+    folder = filedialog.askdirectory(title=title)#弹出系统文件夹选择框
     root.destroy()#用完销毁
     return folder# 返回文件夹内容
 
@@ -93,16 +93,14 @@ def apply_filter(img, mode, size, sigma, d, low):
     return img.copy()
 
 
-def save_result(src, result, mode, folder):
-    out_dir = Path(folder).parent / "output_sample"
+def save_result(src, result, mode, out_dir):
     out_dir.mkdir(exist_ok=True)
     path = out_dir / f"{src.stem}_{MODES[mode][0]}.png"
     cv2.imwrite(str(path), result)
     return path
 
 
-def batch(files, mode, size, sigma, d, low, folder):
-    out_dir = Path(folder).parent / "output_sample"
+def batch(files, mode, size, sigma, d, low, out_dir):
     out_dir.mkdir(exist_ok=True)
     for i, src in enumerate(files, 1):
         img = cv2.imread(str(src))
@@ -124,6 +122,8 @@ def main():
         print(f"没有找到图片: {folder}")
         return
 
+    out_dir = Path(folder).parent / "output_sample"  # 默认输出目录：图片目录的同级
+
     index = 0
     cache = {"index": -1, "image": None}
     dirty = True
@@ -139,7 +139,8 @@ def main():
     cv2.createTrackbar("d", WINDOW, 5, 15, changed)
     cv2.createTrackbar("canny low", WINDOW, 80, 255, changed)
 
-    print("n/p 切图  s 保存  b 批量  o 换文件夹  q 退出")
+    print("n/p 切图  s 保存  b 批量  k 选输出  o 换文件夹  q 退出")
+    print(f"当前输出目录: {out_dir}")
 
     while True:
         if dirty:
@@ -182,7 +183,7 @@ def main():
             d = cv2.getTrackbarPos("d", WINDOW)
             low = cv2.getTrackbarPos("canny low", WINDOW)
             result = apply_filter(cache["image"], mode, size, sigma, d, low)
-            path = save_result(files[index], result, mode, folder)
+            path = save_result(files[index], result, mode, out_dir)
             print(f"已保存: {path}")
         elif key == ord("b"):
             mode = cv2.getTrackbarPos("filter", WINDOW)
@@ -190,7 +191,14 @@ def main():
             sigma = cv2.getTrackbarPos("sigma", WINDOW)
             d = cv2.getTrackbarPos("d", WINDOW)
             low = cv2.getTrackbarPos("canny low", WINDOW)
-            batch(files, mode, size, sigma, d, low, folder)
+            batch(files, mode, size, sigma, d, low, out_dir)
+        elif key == ord("k"):
+            new_out = choose_folder("选择输出目录")
+            if new_out:
+                out_dir = Path(new_out)
+                print(f"输出目录已改为: {out_dir}")
+            else:
+                print("未选择，保持不变")
         elif key == ord("o"):
             folder = choose_folder()
             if folder:
@@ -199,6 +207,8 @@ def main():
                     files = new_files
                     index = 0
                     cache["index"] = -1
+                    out_dir = Path(folder).parent / "output_sample"  # 换文件夹时重置输出目录
+                    print(f"输出目录重置为: {out_dir}")
                     dirty = True
                 else:
                     print(f"这个文件夹里没有图片: {folder}")
