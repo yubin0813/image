@@ -25,9 +25,42 @@ MODES = [
     ("median", "中值滤波"),
     ("bilateral", "双边滤波"),
     ("canny", "Canny 边缘"),
+    ("adaptive", "自适应阈值"),
+    ("binary", "二值化"),
+    ("threshold", "固定阈值二值化"),
+    ("equalize", "直方图均衡化"),
+    ("clahe", "CLAHE局部均衡"),
+    ("brightness", "亮度/对比度"),
+    ("saltpepper", "椒盐噪声"),
+    ("rotate", "旋转"),
+    ("resize", "等比缩放"),
+    ("crop", "中心裁剪"),
+    ("flip", "镜像翻转"),
 ]#功能列表
+PARAMS_WIN = "Params"        # 参数窗口
+PREVIEW_WIN = WINDOW         # 预览窗口
 EXTS = {".jpg", ".jpeg", ".png", ".bmp"}#支持的文件类型
 PREVIEW_W, PREVIEW_H = 1100, 620#图片分辨率大小
+# mode → {参数名: (初始值, 最大值)}
+PARAM_MAP = {
+    "none":        {},
+    "gray":        {},
+    "gaussian":    {"size": (5, 31), "sigma": (0, 10)},
+    "median":      {"size": (5, 31)},
+    "bilateral":   {"size": (5, 31), "sigma": (0, 10), "d": (5, 15)},
+    "canny":       {"canny low": (80, 255)},
+    "adaptive":    {"d": (5, 15), "canny low": (128, 255)},
+    "binary":      {"canny low": (128, 255)},
+    "threshold":   {"canny low": (128, 255)},
+    "equalize":    {},
+    "clahe":       {"d": (8, 32)},
+    "brightness":  {"sigma": (5, 10), "d": (5, 15)},
+    "saltpepper":  {"sigma": (0, 10)},
+    "rotate":      {"sigma": (0, 10)},
+    "resize":      {"sigma": (5, 10)},
+    "crop":        {"size": (20, 31)},
+    "flip":        {"sigma": (0, 2)},
+}
 
 
 def choose_folder(title="选择图片文件夹"):
@@ -90,7 +123,70 @@ def apply_filter(img, mode, size, sigma, d, low):
     if name == "canny":
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         return cv2.Canny(gray, low, max(1, min(255, low * 2)))
+    if name == "adaptive":
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        block = max(3, d)
+        if block % 2 == 0:
+            block += 1
+        return cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                     cv2.THRESH_BINARY, block, low - 128)
+    if name in ("binary", "threshold"):
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        _, result = cv2.threshold(gray, low, 255, cv2.THRESH_BINARY)
+        return result
+    if name == "equalize":
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return cv2.equalizeHist(gray)
+    if name == "clahe":
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(max(1, d), max(1, d)))
+        return clahe.apply(gray)
+    if name == "brightness":
+        # sigma 0~10 映射亮度 +0.5~+1.5，d 映射对比度 0.5~2.0
+        alpha = 0.5 + sigma / 10.0
+        beta = int((d - 5) * 10)
+        return cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+    if name == "saltpepper":
+        # sigma 0~10 映射噪声比例 0~5%
+        prob = sigma / 200.0
+        noisy = img.copy()
+        rand = np.random.random(noisy.shape[:2])
+        black = rand < prob / 2
+        white = rand > 1 - prob / 2
+        if noisy.ndim == 3:
+            noisy[black] = [0, 0, 0]
+            noisy[white] = [255, 255, 255]
+        else:
+            noisy[black] = 0
+            noisy[white] = 255
+        return noisy
+    if name == "rotate":
+        # sigma 0~10 映射角度 0~360 度
+        angle = sigma * 36.0
+        h, w = img.shape[:2]
+        center = (w / 2, h / 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        return cv2.warpAffine(img, M, (w, h))
+    if name == "resize":
+        # sigma 0~10 映射比例 0.5~2.0
+        scale = 0.5 + sigma / 10.0
+        h, w = img.shape[:2]
+        return cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    if name == "crop":
+        # size 映射裁剪比例 0.1~1.0
+        ratio = 0.1 + k / 31.0 * 0.9
+        h, w = img.shape[:2]
+        ch, cw = int(h * ratio), int(w * ratio)
+        y1, x1 = (h - ch) // 2, (w - cw) // 2
+        return img[y1:y1 + ch, x1:x1 + cw]
+    if name == "flip":
+        # sigma 0/1/2 映射 水平/垂直/双向
+        dir_map = {0: 1, 1: 0, 2: -1}
+        code = dir_map.get(sigma % 3, 1)
+        return cv2.flip(img, code)
+
     return img.copy()
+
 
 
 def save_result(src, result, mode, out_dir):
@@ -129,20 +225,38 @@ def main():
     dirty = True
 
     def changed(_value):
-        nonlocal dirty#通过这个关键字修改dirty值
+        nonlocal dirty
         dirty = True
 
-    cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)#创建一个窗口
-    cv2.createTrackbar("filter", WINDOW, 0, len(MODES) - 1, changed)#创建一个滚动条，参数分别为滚动条名称，为滚动条所依附窗口名，初始值，最大值，回调函数
-    cv2.createTrackbar("size", WINDOW, 5, 31, changed)
-    cv2.createTrackbar("sigma", WINDOW, 0, 10, changed)
-    cv2.createTrackbar("d", WINDOW, 5, 15, changed)
-    cv2.createTrackbar("canny low", WINDOW, 80, 255, changed)
+    # 预览窗口：只放 filter 选择
+    cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
+    cv2.createTrackbar("filter", WINDOW, 0, len(MODES) - 1, changed)
+
+    # 参数窗口：当前功能需要的 trackbar
+    cv2.namedWindow(PARAMS_WIN, cv2.WINDOW_AUTOSIZE)
+
+    def rebuild_params_trackbars(mode):
+        cv2.destroyWindow(PARAMS_WIN)
+        cv2.namedWindow(PARAMS_WIN, cv2.WINDOW_AUTOSIZE)
+        name = MODES[mode][0]
+        for param, (val, mx) in PARAM_MAP[name].items():
+            cv2.createTrackbar(param, PARAMS_WIN, val, mx, changed)
+
+    rebuild_params_trackbars(0)  # 初始建一次
 
     print("n/p 切图  s 保存  b 批量  k 选输出  o 换文件夹  q 退出")
     print(f"当前输出目录: {out_dir}")
 
+    prev_mode = 0  # 上一次的 filter，用来检测变化
+
     while True:
+        # 检测 filter 变化 → 重建参数窗口
+        cur_mode = cv2.getTrackbarPos("filter", WINDOW)
+        if cur_mode != prev_mode:
+            prev_mode = cur_mode
+            rebuild_params_trackbars(cur_mode)
+            dirty = True
+
         if dirty:
             if cache["index"] != index:
                 img = cv2.imread(str(files[index]))
@@ -152,18 +266,18 @@ def main():
                 cache["index"] = index
                 cache["image"] = img
 
-            mode = cv2.getTrackbarPos("filter", WINDOW)
-            size = cv2.getTrackbarPos("size", WINDOW)
-            sigma = cv2.getTrackbarPos("sigma", WINDOW)
-            d = cv2.getTrackbarPos("d", WINDOW)
-            low = cv2.getTrackbarPos("canny low", WINDOW)
+            # 从 PARAMS_WIN 读参数，不存在的给默认值
+            cur_name = MODES[cur_mode][0]
+            size = cv2.getTrackbarPos("size", PARAMS_WIN) if "size" in PARAM_MAP[cur_name] else 5
+            sigma = cv2.getTrackbarPos("sigma", PARAMS_WIN) if "sigma" in PARAM_MAP[cur_name] else 0
+            d = cv2.getTrackbarPos("d", PARAMS_WIN) if "d" in PARAM_MAP[cur_name] else 5
+            low = cv2.getTrackbarPos("canny low", PARAMS_WIN) if "canny low" in PARAM_MAP[cur_name] else 80
 
-            result = apply_filter(cache["image"], mode, size, sigma, d, low)
+            result = apply_filter(cache["image"], cur_mode, size, sigma, d, low)
             cv2.imshow(WINDOW, preview(cache["image"], result))
             cv2.setWindowTitle(
                 WINDOW,
-                f"{MODES[mode][0]} | size={size} sigma={sigma} d={d} "
-                f"canny={low} | {index + 1}/{len(files)} {files[index].name}",
+                f"{MODES[cur_mode][0]} | {index + 1}/{len(files)} {files[index].name}",
             )
             dirty = False
 
@@ -177,21 +291,23 @@ def main():
             index = (index - 1) % len(files)
             dirty = True
         elif key == ord("s"):
-            mode = cv2.getTrackbarPos("filter", WINDOW)
-            size = cv2.getTrackbarPos("size", WINDOW)
-            sigma = cv2.getTrackbarPos("sigma", WINDOW)
-            d = cv2.getTrackbarPos("d", WINDOW)
-            low = cv2.getTrackbarPos("canny low", WINDOW)
-            result = apply_filter(cache["image"], mode, size, sigma, d, low)
-            path = save_result(files[index], result, mode, out_dir)
+            cur_mode = cv2.getTrackbarPos("filter", WINDOW)
+            cur_name = MODES[cur_mode][0]
+            size = cv2.getTrackbarPos("size", PARAMS_WIN) if "size" in PARAM_MAP[cur_name] else 5
+            sigma = cv2.getTrackbarPos("sigma", PARAMS_WIN) if "sigma" in PARAM_MAP[cur_name] else 0
+            d = cv2.getTrackbarPos("d", PARAMS_WIN) if "d" in PARAM_MAP[cur_name] else 5
+            low = cv2.getTrackbarPos("canny low", PARAMS_WIN) if "canny low" in PARAM_MAP[cur_name] else 80
+            result = apply_filter(cache["image"], cur_mode, size, sigma, d, low)
+            path = save_result(files[index], result, cur_mode, out_dir)
             print(f"已保存: {path}")
         elif key == ord("b"):
-            mode = cv2.getTrackbarPos("filter", WINDOW)
-            size = cv2.getTrackbarPos("size", WINDOW)
-            sigma = cv2.getTrackbarPos("sigma", WINDOW)
-            d = cv2.getTrackbarPos("d", WINDOW)
-            low = cv2.getTrackbarPos("canny low", WINDOW)
-            batch(files, mode, size, sigma, d, low, out_dir)
+            cur_mode = cv2.getTrackbarPos("filter", WINDOW)
+            cur_name = MODES[cur_mode][0]
+            size = cv2.getTrackbarPos("size", PARAMS_WIN) if "size" in PARAM_MAP[cur_name] else 5
+            sigma = cv2.getTrackbarPos("sigma", PARAMS_WIN) if "sigma" in PARAM_MAP[cur_name] else 0
+            d = cv2.getTrackbarPos("d", PARAMS_WIN) if "d" in PARAM_MAP[cur_name] else 5
+            low = cv2.getTrackbarPos("canny low", PARAMS_WIN) if "canny low" in PARAM_MAP[cur_name] else 80
+            batch(files, cur_mode, size, sigma, d, low, out_dir)
         elif key == ord("k"):
             new_out = choose_folder("选择输出目录")
             if new_out:
