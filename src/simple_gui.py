@@ -27,7 +27,6 @@ MODES = [
     ("canny", "Canny 边缘"),
 ]#功能列表
 EXTS = {".jpg", ".jpeg", ".png", ".bmp"}#支持的文件类型
-OUTPUT = Path("output_simple")#图片输出的位置
 PREVIEW_W, PREVIEW_H = 1100, 620#图片分辨率大小
 
 
@@ -95,21 +94,23 @@ def apply_filter(img, mode, size, sigma, d, low):
 
 
 def save_result(src, result, mode):
-    OUTPUT.mkdir(exist_ok=True)
-    path = OUTPUT / f"{src.stem}_{MODES[mode][0]}.png"
+    out_dir = src.parent / "output_sample"
+    out_dir.mkdir(exist_ok=True)
+    path = out_dir / f"{src.stem}_{MODES[mode][0]}.png"
     cv2.imwrite(str(path), result)
     return path
 
 
 def batch(files, mode, size, sigma, d, low):
-    OUTPUT.mkdir(exist_ok=True)
     for i, src in enumerate(files, 1):
         img = cv2.imread(str(src))
         if img is None:
             print(f"跳过无法读取的图片: {src}")
             continue
         result = apply_filter(img, mode, size, sigma, d, low)
-        path = OUTPUT / f"{src.stem}_{MODES[mode][0]}.png"
+        out_dir = src.parent / "output_sample"
+        out_dir.mkdir(exist_ok=True)
+        path = out_dir / f"{src.stem}_{MODES[mode][0]}.png"
         cv2.imwrite(str(path), result)
         print(f"[{i}/{len(files)}] {src.name} -> {path.name}")
 
