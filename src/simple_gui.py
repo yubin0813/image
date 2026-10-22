@@ -32,7 +32,7 @@ PREVIEW_W, PREVIEW_H = 1100, 620#图片分辨率大小
 
 def choose_folder():
     root = Tk()#创建一个TK窗口
-    # root.withdraw()#把它隐藏
+    root.withdraw()#把它隐藏
     folder = filedialog.askdirectory(title="选择图片文件夹")#弹出系统文件夹选择框
     root.destroy()#用完销毁
     return folder# 返回文件夹内容
@@ -93,23 +93,23 @@ def apply_filter(img, mode, size, sigma, d, low):
     return img.copy()
 
 
-def save_result(src, result, mode):
-    out_dir = src.parent / "output_sample"
+def save_result(src, result, mode, folder):
+    out_dir = Path(folder).parent / "output_sample"
     out_dir.mkdir(exist_ok=True)
     path = out_dir / f"{src.stem}_{MODES[mode][0]}.png"
     cv2.imwrite(str(path), result)
     return path
 
 
-def batch(files, mode, size, sigma, d, low):
+def batch(files, mode, size, sigma, d, low, folder):
+    out_dir = Path(folder).parent / "output_sample"
+    out_dir.mkdir(exist_ok=True)
     for i, src in enumerate(files, 1):
         img = cv2.imread(str(src))
         if img is None:
             print(f"跳过无法读取的图片: {src}")
             continue
         result = apply_filter(img, mode, size, sigma, d, low)
-        out_dir = src.parent / "output_sample"
-        out_dir.mkdir(exist_ok=True)
         path = out_dir / f"{src.stem}_{MODES[mode][0]}.png"
         cv2.imwrite(str(path), result)
         print(f"[{i}/{len(files)}] {src.name} -> {path.name}")
@@ -182,7 +182,7 @@ def main():
             d = cv2.getTrackbarPos("d", WINDOW)
             low = cv2.getTrackbarPos("canny low", WINDOW)
             result = apply_filter(cache["image"], mode, size, sigma, d, low)
-            path = save_result(files[index], result, mode)
+            path = save_result(files[index], result, mode, folder)
             print(f"已保存: {path}")
         elif key == ord("b"):
             mode = cv2.getTrackbarPos("filter", WINDOW)
@@ -190,7 +190,7 @@ def main():
             sigma = cv2.getTrackbarPos("sigma", WINDOW)
             d = cv2.getTrackbarPos("d", WINDOW)
             low = cv2.getTrackbarPos("canny low", WINDOW)
-            batch(files, mode, size, sigma, d, low)
+            batch(files, mode, size, sigma, d, low, folder)
         elif key == ord("o"):
             folder = choose_folder()
             if folder:
