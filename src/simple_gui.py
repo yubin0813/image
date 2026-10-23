@@ -13,7 +13,7 @@
 import os
 from pathlib import Path
 from tkinter import Tk, filedialog
-
+import json
 import cv2
 import numpy as np
 
@@ -270,6 +270,11 @@ def main():
 
     # 参数窗口：当前功能需要的 trackbar
     cv2.namedWindow(PARAMS_WIN, cv2.WINDOW_AUTOSIZE)
+    def save_config(folder,mode,params,t):
+        cfg = {"mode": MODES[mode][0],"params":params}
+        json_path = os.path.join(os.path.dirname(folder),"config",f"{t}——{MODES[cur_mode][0]}.json")
+        with open(json_path,"w",encoding="utf-8")as f:
+            json.dump(cfg,f)
 
     def rebuild_params_trackbars(mode):
         cv2.destroyWindow(PARAMS_WIN)
@@ -324,12 +329,14 @@ def main():
         elif key == ord("s"):
             cur_mode = cv2.getTrackbarPos("filter", WINDOW)
             params = collect_params(cur_mode)
+            save_config(folder,cur_mode,params,"s")
             result = apply_filter(cache["image"], cur_mode, params)
             path = save_result(files[index], result, cur_mode, out_dir)
             print(f"已保存: {path}")
         elif key == ord("b"):
             cur_mode = cv2.getTrackbarPos("filter", WINDOW)
             params = collect_params(cur_mode)
+            save_config(folder,cur_mode,params,"b")
             batch(files, cur_mode, params, out_dir)
         elif key == ord("k"):
             new_out = choose_folder("选择输出目录")
