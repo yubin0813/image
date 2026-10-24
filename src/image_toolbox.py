@@ -2,17 +2,24 @@
 
 运行：python3 simple_gui.py
 
+窗口结构：
+    预览窗口  左侧原图 + 右侧处理结果，只放一个 filter 滑块用来切功能
+    参数窗口  只放"当前功能"需要的参数滑块，切功能时整窗重建
+
 按键：
-    n / p   下一张 / 上一张
-    s       保存当前结果
-    b       批量处理当前文件夹
-    o       重新选择文件夹
+    ] / [   下一张 / 上一张
+    s       保存当前结果（同时存一份 json 参数配置）
+    b       批量处理当前文件夹（整批共用当前参数，存 b 前缀配置）
+    l       读取 json 配置，还原功能与全部参数
+    r       批量重命名输出目录里的结果图
+    k       手动指定输出目录
+    o       重新选择输入文件夹
     q / Esc 退出
 """
 
 import os
 from pathlib import Path
-from tkinter import Tk, filedialog
+from tkinter import Tk, filedialog, simpledialog#创建窗口，文件选择框
 import json
 import cv2
 import numpy as np
@@ -27,7 +34,6 @@ MODES = [
     ("canny", "Canny 边缘"),
     ("adaptive", "自适应阈值"),
     ("binary", "二值化"),
-    ("threshold", "固定阈值二值化"),
     ("equalize", "直方图均衡化"),
     ("clahe", "CLAHE局部均衡"),
     ("brightness", "亮度/对比度"),
@@ -40,7 +46,7 @@ MODES = [
 PARAMS_WIN = "Params"        # 参数窗口
 PREVIEW_WIN = WINDOW         # 预览窗口
 EXTS = {".jpg", ".jpeg", ".png", ".bmp"}#支持的文件类型
-PREVIEW_W, PREVIEW_H = 1100, 620        #图片分辨率大小
+PREVIEW_W, PREVIEW_H = 1100, 620        #图片窗口大小
 
 # mode → {真实参数名: (初始值, 最大值)}
 PARAM_MAP = {
@@ -52,7 +58,6 @@ PARAM_MAP = {
     "canny":       {"threshold1": (80, 255), "threshold2": (160, 500)},
     "adaptive":    {"blockSize": (5, 31), "C": (0, 20)},   # blockSize 自动奇数
     "binary":      {"thresh": (128, 255)},
-    "threshold":   {"thresh": (128, 255)},
     "equalize":    {},
     "clahe":       {"clipLimit": (2, 10), "tileGridSize": (8, 32)},  # clipLimit*1.0, tileGridSize=块大小
     "brightness":  {"alpha": (10, 30), "beta": (0, 255)},   # alpha*0.1 即亮度系数 1.0~3.0; beta=0~255 加亮
@@ -72,9 +77,27 @@ def choose_folder(title="选择图片文件夹"):
     return folder# 返回文件夹内容
 
 
+def choose_json(init_dir, title="选择配置文件"):
+    root = Tk()
+    root.withdraw()
+    path = filedialog.askopenfilename(title=title, initialdir=init_dir,
+                                      filetypes=[("JSON", "*.json")])
+    root.destroy()
+    return path
+
+
+def ask_name(prompt, title="输入名称"):
+    root = Tk()
+    root.withdraw()
+    name = simpledialog.askstring(title, prompt, parent=root)
+    root.destroy()
+    return name
+
+
 def list_images(folder):
+    """递归收集 folder 下所有支持格式的图片, 排序后返回 Path 列表（输出扁平, 不保留子目录结构）。"""
     files = []
-    for root, _dirs, names in os.walk(folder):#walk拿到文件夹路径循环拿到文件夹里的图片
+    for root, _dirs, names in os.walk(folder):#walk拿到文件夹路径和子文件夹名字，循环拿到文件夹里的图片
         for name in names:
             if Path(name).suffix.lower() in EXTS:#取文件扩展名，然后转换成小写，判断是否在文件类型里
                 files.append(Path(root) / name)#将文件名拼接到一起，形成路径
@@ -85,17 +108,25 @@ def to_bgr(img):
     return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if img.ndim == 2 else img
 
 
-def fit(img, max_w, max_h):
+def fit(img, max_w, max_h, up=False):
+    """缩放到 max_w×max_h 以内; up=True 时不足框的图也放大撑满"""
     h, w = img.shape[:2]
-    scale = min(max_w / w, max_h / h, 1.0)
-    if scale >= 1.0:
+    scale = min(max_w / w, max_h / h)
+    if scale >= 1.0 and not up:
         return img
-    return cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    # 缩小用 INTER_AREA(抗锯齿), 放大用 INTER_LINEAR
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(img, None, fx=scale, fy=scale, interpolation=interp)
 
 
 def preview(original, result):
-    left = fit(original, PREVIEW_W // 2 - 8, PREVIEW_H)
-    right = fit(to_bgr(result), PREVIEW_W // 2 - 8, PREVIEW_H)
+    """把原图和结果拼成一张横向对比图：左原图、右结果，中间留 16px 间隙。
+
+    up=True 表示"小图也放大撑满半边"，这样裁剪/缩放后窗口尺寸不会缩水。
+    两边高度若不一致，用深灰边补齐到相同高度，才能 np.hstack 堆叠。
+    """
+    left = fit(original, PREVIEW_W // 2 - 8, PREVIEW_H, up=True)
+    right = fit(to_bgr(result), PREVIEW_W // 2 - 8, PREVIEW_H, up=True)
     height = max(left.shape[0], right.shape[0])
     left = cv2.copyMakeBorder(left, 0, height - left.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(30, 30, 30))
     right = cv2.copyMakeBorder(right, 0, height - right.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(30, 30, 30))
@@ -108,7 +139,12 @@ def collect_params(mode):
     return {pname: cv2.getTrackbarPos(pname, PARAMS_WIN) for pname in PARAM_MAP[name]}
 
 def apply_filter(img, mode, params):
-    """按 mode 调用 OpenCV 函数，params 是 collect_params 返回的 {参数名: int}"""
+    """按 mode 调用 OpenCV 函数，params 是 collect_params 返回的 {参数名: int}。
+
+    约定：params 里存的是**滑块原始整数**（如 sigmaX=15、ratio=30），
+    单位换算（/10、/100、/1000）、奇数化、下限保护全部在这里做一次。
+    这样 json 配置存的就是界面上一模一样的数字，回放时不会二次换算而失真。
+    """
     name = MODES[mode][0]
 
     # —— 不需要任何参数的功能 ——
@@ -206,11 +242,12 @@ def apply_filter(img, mode, params):
         # cv2.resize(src, dsize[, fx, fy, interpolation])
         # fx/fy=缩放比例(实际 scale*0.1 → 0.5~3.0, >1放大 <1缩小)
         scale = params["scale"] * 0.1
+        if scale < 0.01 : scale = 0.01
         h, w = img.shape[:2]
         return cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     if name == "crop":
         # 从图像中心按比例裁剪，ratio=保留比例(实际 ratio/100 → 0.3~1.0)
-        ratio = params["ratio"] / 100.0
+        ratio = max(params["ratio"], 10) / 100.0  # 滑块没有最小值, 拖到0时按10处理
         h, w = img.shape[:2]
         ch, cw = int(h * ratio), int(w * ratio)
         y1, x1 = (h - ch) // 2, (w - cw) // 2
@@ -226,13 +263,15 @@ def apply_filter(img, mode, params):
     return img.copy()
 
 def save_result(src, result, mode, out_dir):
-    out_dir.mkdir(exist_ok=True)
+    """单图落盘：{原文件名}_{功能名}.png，统一存 png 以保证无损。"""
+    out_dir.mkdir(exist_ok=True)  # exist_ok=True: 目录已存在时静默跳过
     path = out_dir / f"{src.stem}_{MODES[mode][0]}.png"
     cv2.imwrite(str(path), result)
     return path
 
 
 def batch(files, mode, params, out_dir):
+    """批量处理整个文件夹：params 由调用方读一次后传入，整批共用同一套参数。"""
     out_dir.mkdir(exist_ok=True)
     for i, src in enumerate(files, 1):
         img = cv2.imread(str(src))
@@ -243,6 +282,21 @@ def batch(files, mode, params, out_dir):
         path = out_dir / f"{src.stem}_{MODES[mode][0]}.png"
         cv2.imwrite(str(path), result)
         print(f"[{i}/{len(files)}] {src.name} -> {path.name}")
+
+
+def rename_batch(files, base):
+    """两阶段改名: 先全部改成临时名, 再改成目标名, 避免目标名和未改名的旧文件冲突被覆盖"""
+    pairs = []
+    # 阶段1: 全部挪到 __tmp__NNN, 腾空原有文件名
+    for i, src in enumerate(files, 1):
+        tmp = src.with_name(f"__tmp__{i:03d}{src.suffix}")
+        os.rename(src, tmp)
+        pairs.append((src.name, tmp))
+    # 阶段2: 临时名 → base_001.ext; 此时目标名不可能与同批文件重名
+    for i, (old, tmp) in enumerate(pairs, 1):
+        dst = tmp.with_name(f"{base}_{i:03d}{tmp.suffix}")
+        os.rename(tmp, dst)
+        print(f"{old} -> {dst.name}")
 
 
 def main():
@@ -256,11 +310,12 @@ def main():
 
     out_dir = Path(folder).parent / "output_sample"  # 默认输出目录：图片目录的同级
 
-    index = 0
-    cache = {"index": -1, "image": None}
-    dirty = True
+    index = 0                              # 当前显示第几张（files 的下标）
+    cache = {"index": -1, "image": None}   # 图像缓存: 只有切图才重新 imread, 拖滑块不重复读盘
+    dirty = True                           # 脏标记: True=本圈要重算重绘, False=直接跳过
 
     def changed(_value):
+        # 任何滑块被拖动都会进这里; 只负责点亮"需要重绘", 具体值渲染时再用 collect_params 读
         nonlocal dirty
         dirty = True
 
@@ -271,12 +326,15 @@ def main():
     # 参数窗口：当前功能需要的 trackbar
     cv2.namedWindow(PARAMS_WIN, cv2.WINDOW_AUTOSIZE)
     def save_config(folder,mode,params,t):
+        # 把当前参数落盘: 目录 = 输入图片目录同级的 config/, 文件名前缀 t 区分来源(s=单图保存 / b=批量)
         cfg = {"mode": MODES[mode][0],"params":params}
         json_path = os.path.join(os.path.dirname(folder),"config",f"{t}——{MODES[cur_mode][0]}.json")
         with open(json_path,"w",encoding="utf-8")as f:
             json.dump(cfg,f)
 
     def rebuild_params_trackbars(mode):
+        # OpenCV 的 trackbar 建好后不能增删, 换功能只能"销毁窗口 + 重建窗口";
+        # 副作用是参数会回到 PARAM_MAP 里的初始值, 需要保留时得自己记住再 setTrackbarPos 回去
         cv2.destroyWindow(PARAMS_WIN)
         cv2.namedWindow(PARAMS_WIN, cv2.WINDOW_AUTOSIZE)
         name = MODES[mode][0]
@@ -285,21 +343,24 @@ def main():
 
     rebuild_params_trackbars(0)  # 初始建一次
 
-    print("n/p 切图  s 保存  b 批量  k 选输出  o 换文件夹  q 退出")
+    print("[/] 切图  s 保存  b 批量保存  k 选输出  l 读配置  r 重命名  o 换文件夹  q 退出")
     print(f"当前输出目录: {out_dir}")
 
     prev_mode = 0  # 上一次的 filter，用来检测变化
 
+    # 主循环三件事: ①检测功能切换并重建参数滑块 ②画面脏了才重算并显示 ③处理按键
+    # 节拍由 waitKey(20) 决定, 即最快 50 圈/秒; 静止时 ② 整块被跳过, 不空转滤波
     while True:
-        # 检测 filter 变化 → 重建参数窗口
+        # ① 检测 filter 变化 → 重建参数窗口
         cur_mode = cv2.getTrackbarPos("filter", WINDOW)
         if cur_mode != prev_mode:
             prev_mode = cur_mode
             rebuild_params_trackbars(cur_mode)
             dirty = True
 
+        # ② 重新渲染: 取图(必要时读盘) → 读参数 → 滤波 → 左右拼图 → 显示
         if dirty:
-            if cache["index"] != index:
+            if cache["index"] != index:   # 只有切图才重新解码, 其余情况复用缓存
                 img = cv2.imread(str(files[index]))
                 if img is None:
                     print(f"无法读取: {files[index]}")
@@ -317,6 +378,8 @@ def main():
             )
             dirty = False
 
+        # ③ 按键分发; & 0xFF 抹掉高位, 把不同平台混入的修饰键状态归一成单字节键码
+        # waitKey 同时是 OpenCV 窗口的事件泵: 不调用它, imshow 的画面不会刷新
         key = cv2.waitKey(20) & 0xFF
         if key in (ord("q"), 27):
             break
@@ -327,6 +390,7 @@ def main():
             index = (index - 1) % len(files)
             dirty = True
         elif key == ord("s"):
+            # 单图保存: 存图 + 存一份参数配置, 之后按 l 可以完整复现
             cur_mode = cv2.getTrackbarPos("filter", WINDOW)
             params = collect_params(cur_mode)
             save_config(folder,cur_mode,params,"s")
@@ -334,11 +398,13 @@ def main():
             path = save_result(files[index], result, cur_mode, out_dir)
             print(f"已保存: {path}")
         elif key == ord("b"):
+            # 批量处理: 参数在循环外读一次, 整批共用(中途拖滑块不影响本次结果)
             cur_mode = cv2.getTrackbarPos("filter", WINDOW)
             params = collect_params(cur_mode)
             save_config(folder,cur_mode,params,"b")
             batch(files, cur_mode, params, out_dir)
         elif key == ord("k"):
+            # 手动指定输出目录; 取消选择则保持原值不动
             new_out = choose_folder("选择输出目录")
             if new_out:
                 out_dir = Path(new_out)
@@ -346,6 +412,7 @@ def main():
             else:
                 print("未选择，保持不变")
         elif key == ord("o"):
+            # 换输入文件夹: 成功后同时把输出目录重置回默认值, 并清空图像缓存
             folder = choose_folder()
             if folder:
                 new_files = list_images(folder)
@@ -359,6 +426,39 @@ def main():
                 else:
                     print(f"这个文件夹里没有图片: {folder}")
             print(f"当前文件夹: {folder}，共 {len(files)} 张")
+        elif key == ord("l"):
+            # 从 json 还原配置, 四步顺序不能换(缺一步都会被主循环重建或覆盖):
+            # 1) 切功能滑块 2) 同步 prev_mode 抑制主循环重建 3) 先建出新功能的滑块 4) 再逐项填值
+            cfg_dir = os.path.join(os.path.dirname(folder), "config")
+            json_path = choose_json(cfg_dir)
+            if json_path:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                # 从功能名反查 filter 滑块的索引（存名字而非下标，MODES 顺序调整后旧配置依然可用）
+                mode_idx = next((i for i, m in enumerate(MODES) if m[0] == cfg["mode"]), None)
+                if mode_idx is None:
+                    print(f"配置里的功能不认识: {cfg['mode']}")
+                else:
+                    cv2.setTrackbarPos("filter", WINDOW, mode_idx)
+                    prev_mode = mode_idx                # 同步, 避免主循环检测到"变化"后用默认值重建滑块
+                    rebuild_params_trackbars(mode_idx)  # 先把该功能的滑块建出来
+                    for pname, val in cfg["params"].items():
+                        cv2.setTrackbarPos(pname, PARAMS_WIN, val)
+                    dirty = True
+                    print(f"已加载配置: {os.path.basename(json_path)}")
+            else:
+                print("未选择配置文件")
+        elif key == ord("r"):
+            # 扫描的是"输出目录"（不是输入目录）, 只挑里边的图片改名
+            outs = list_images(str(out_dir))
+            if not outs:
+                print(f"输出目录里没有图片: {out_dir}")
+            else:
+                base = ask_name("输入新名称(自动加三位序号)", "批量重命名")
+                if base:
+                    rename_batch(outs, base)
+                else:
+                    print("未输入名称，取消")
 
     cv2.destroyAllWindows()
 
