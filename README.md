@@ -137,3 +137,9 @@ python3 src/simple_gui.py
 - 参数窗口每次切换模式都会重建，滑杆值不会跨模式保留；
 - 「二值化」与「固定阈值二值化」目前实现相同，参数都是 `thresh`；
 - 直接使用 `cv2.imread` / `cv2.imwrite`，没有做中文等特殊路径兼容处理。
+
+## 许可证
+
+本项目基于 [Apache License 2.0](LICENSE) 开源，Copyright 2026 yubin0813。
+
+使用时需要保留版权声明和许可证文本；修改后的文件需注明改动。
